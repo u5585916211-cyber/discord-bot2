@@ -12,7 +12,7 @@ from discord import app_commands
 # ENV
 # =========================================================
 TOKEN = os.getenv("TOKEN")
-GUILD_ID_RAW = os.getenv("GUILD_ID")
+GUILD_ID_RAW = os.getenv("GUILD_ID") or os.getenv("GUILD_ID_RAW")
 
 if not TOKEN:
     raise ValueError("TOKEN is missing. Add it in Railway Variables.")
@@ -32,7 +32,6 @@ WHEEL_PANEL_CHANNEL_ID = 1488310736269873325
 WHEEL_LOG_CHANNEL_ID = 1488310901537771670
 WHEEL_STAFF_PANEL_CHANNEL_ID = 1488311013098000414
 
-# optional staff role:
 STAFF_ROLE_ID = 1487568447926829126
 
 # =========================================================
@@ -58,13 +57,14 @@ COLOR_LOG = 0x2B2D31
 intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
-intents.message_content = False
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 coins_db = {}
 stats_db = {}
 pending_keys_db = {}
+
+user_spin_locks = set()
 
 # =========================================================
 # JSON HELPERS
@@ -114,13 +114,11 @@ def set_user_coins(user_id: int, amount: int):
 
 
 def add_user_coins(user_id: int, amount: int):
-    current = get_user_coins(user_id)
-    set_user_coins(user_id, current + int(amount))
+    set_user_coins(user_id, get_user_coins(user_id) + int(amount))
 
 
 def remove_user_coins(user_id: int, amount: int):
-    current = get_user_coins(user_id)
-    set_user_coins(user_id, max(0, current - int(amount)))
+    set_user_coins(user_id, max(0, get_user_coins(user_id) - int(amount)))
 
 
 def ensure_stats_user(user_id: int):
@@ -130,10 +128,10 @@ def ensure_stats_user(user_id: int):
             "total_spins": 0,
             "total_coins_spent": 0,
             "total_coins_won": 0,
-            "last_spin_at": None,
             "wins": 0,
             "losses": 0,
             "pending_key_wins": 0,
+            "last_spin_at": None,
         }
 
 
@@ -178,9 +176,25 @@ def reward_label(reward: dict) -> str:
         return f"+{reward['amount']} Coins"
     if reward["type"] == "key":
         return f"{reward['product']} Key"
-    if reward["type"] == "freespin":
-        return f"{reward['amount']} Free Spin Credit"
+    if reward["type"] == "bonus":
+        return f"+{reward['amount']} Bonus Coins"
     return "Unknown"
+
+
+def reward_display(reward: dict) -> str:
+    if reward["type"] == "lose":
+        return "💀 LOSE"
+    if reward["type"] == "coins":
+        return f"💰 +{reward['amount']} COINS"
+    if reward["type"] == "key":
+        if reward["product"] == "1 Day":
+            return "🔑 1 DAY KEY"
+        if reward["product"] == "1 Week":
+            return "🔑 1 WEEK KEY"
+        return "💎 LIFETIME KEY"
+    if reward["type"] == "bonus":
+        return f"🎁 +{reward['amount']} BONUS"
+    return "❔ UNKNOWN"
 
 
 async def send_log(guild: discord.Guild, title: str, description: str, color: int = COLOR_LOG):
@@ -191,88 +205,88 @@ async def send_log(guild: discord.Guild, title: str, description: str, color: in
 
 
 # =========================================================
-# WHEEL REWARDS
+# REWARD CONFIG
 # =========================================================
 WHEEL_CONFIG = {
     5: [
-        {"type": "lose", "weight": 50},
-        {"type": "coins", "amount": 3, "weight": 22},
-        {"type": "coins", "amount": 5, "weight": 15},
-        {"type": "coins", "amount": 8, "weight": 8},
-        {"type": "key", "product": "1 Day", "weight": 4},
-        {"type": "freespin", "amount": 5, "weight": 1},
+        {"type": "lose", "weight": 40},
+        {"type": "coins", "amount": 4, "weight": 24},
+        {"type": "coins", "amount": 6, "weight": 18},
+        {"type": "coins", "amount": 9, "weight": 9},
+        {"type": "key", "product": "1 Day", "weight": 6},
+        {"type": "bonus", "amount": 5, "weight": 3},
     ],
     10: [
-        {"type": "lose", "weight": 38},
-        {"type": "coins", "amount": 6, "weight": 22},
-        {"type": "coins", "amount": 10, "weight": 18},
-        {"type": "coins", "amount": 15, "weight": 10},
-        {"type": "key", "product": "1 Day", "weight": 8},
-        {"type": "key", "product": "1 Week", "weight": 3},
-        {"type": "freespin", "amount": 10, "weight": 1},
+        {"type": "lose", "weight": 28},
+        {"type": "coins", "amount": 8, "weight": 22},
+        {"type": "coins", "amount": 12, "weight": 18},
+        {"type": "coins", "amount": 18, "weight": 10},
+        {"type": "key", "product": "1 Day", "weight": 10},
+        {"type": "key", "product": "1 Week", "weight": 8},
+        {"type": "bonus", "amount": 10, "weight": 4},
     ],
     25: [
-        {"type": "lose", "weight": 28},
-        {"type": "coins", "amount": 15, "weight": 20},
-        {"type": "coins", "amount": 25, "weight": 20},
-        {"type": "coins", "amount": 40, "weight": 12},
+        {"type": "lose", "weight": 18},
+        {"type": "coins", "amount": 18, "weight": 20},
+        {"type": "coins", "amount": 28, "weight": 18},
+        {"type": "coins", "amount": 45, "weight": 12},
         {"type": "key", "product": "1 Day", "weight": 8},
-        {"type": "key", "product": "1 Week", "weight": 7},
-        {"type": "key", "product": "Lifetime", "weight": 3},
-        {"type": "freespin", "amount": 25, "weight": 2},
+        {"type": "key", "product": "1 Week", "weight": 10},
+        {"type": "key", "product": "Lifetime", "weight": 9},
+        {"type": "bonus", "amount": 25, "weight": 5},
     ],
 }
 
 
 def roll_reward(spin_cost: int) -> dict:
     pool = WHEEL_CONFIG[spin_cost]
-    choices = [r for r in pool]
     weights = [r["weight"] for r in pool]
-    return random.choices(choices, weights=weights, k=1)[0].copy()
+    return random.choices(pool, weights=weights, k=1)[0].copy()
 
 
 # =========================================================
-# EMBEDS
+# UI BUILDERS
 # =========================================================
 def build_main_panel_embed() -> discord.Embed:
     embed = discord.Embed(
-        title="🎡 GEN COIN WHEEL",
+        title="🎡 GEN LUCK WHEEL",
         description=(
             f"{premium_divider()}\n"
-            f"Spin the wheel with **server coins** and try your luck.\n\n"
-            f"**Available Spins**\n"
+            f"Use your **server coins** and spin the big wheel.\n\n"
+            f"**Spins**\n"
             f"• 5 Coins\n"
             f"• 10 Coins\n"
             f"• 25 Coins\n\n"
             f"**Possible Rewards**\n"
-            f"• More coins\n"
-            f"• 1 Day key reward\n"
-            f"• 1 Week key reward\n"
-            f"• Lifetime key reward\n\n"
-            f"Use the buttons below.\n"
+            f"• Coin wins\n"
+            f"• Bonus coins\n"
+            f"• 1 Day key rewards\n"
+            f"• 1 Week key rewards\n"
+            f"• Lifetime key rewards\n\n"
+            f"Press a button below to spin.\n"
             f"{premium_divider()}"
         ),
         color=COLOR_MAIN
     )
-    embed.set_footer(text="Internal server coins only.")
+    embed.set_footer(text="Internal server coins only • No real money")
     return embed
 
 
 def build_rewards_embed() -> discord.Embed:
     embed = discord.Embed(
-        title="🎁 WHEEL REWARDS",
+        title="🎁 REWARD OVERVIEW",
         description=(
             f"{premium_divider()}\n"
-            f"**5 Coin Spin**\n"
-            f"• chance to lose\n"
-            f"• small coin wins\n"
-            f"• low 1 Day key chance\n\n"
-            f"**10 Coin Spin**\n"
-            f"• better coin rewards\n"
-            f"• 1 Day / 1 Week key chance\n\n"
-            f"**25 Coin Spin**\n"
-            f"• best rewards\n"
-            f"• highest key chance\n"
+            f"**5 Coins**\n"
+            f"• safer beginner spin\n"
+            f"• smaller coin wins\n"
+            f"• small 1 Day key chance\n\n"
+            f"**10 Coins**\n"
+            f"• balanced rewards\n"
+            f"• better 1 Day / 1 Week chances\n\n"
+            f"**25 Coins**\n"
+            f"• highest reward tier\n"
+            f"• best chance for big coin wins\n"
             f"• possible Lifetime reward\n"
             f"{premium_divider()}"
         ),
@@ -301,11 +315,11 @@ def build_balance_embed(member: discord.Member) -> discord.Embed:
 
 def build_staff_panel_embed() -> discord.Embed:
     embed = discord.Embed(
-        title="🛠️ GEN WHEEL STAFF PANEL",
+        title="🛠️ WHEEL STAFF PANEL",
         description=(
             f"{premium_divider()}\n"
-            f"Use the buttons below to manage user balances and key rewards.\n\n"
-            f"**Available Actions**\n"
+            f"Manage balances and pending key rewards.\n\n"
+            f"**Actions**\n"
             f"• Add Coins\n"
             f"• Remove Coins\n"
             f"• Set Coins\n"
@@ -318,36 +332,59 @@ def build_staff_panel_embed() -> discord.Embed:
     return embed
 
 
-def build_spin_start_embed(member: discord.Member, cost: int) -> discord.Embed:
+def build_big_spin_embed(member: discord.Member, cost: int, visible_items: list[str], title: str) -> discord.Embed:
+    lines = []
+    top_border = "╔" + "═" * 31 + "╗"
+    mid_border = "╠" + "═" * 31 + "╣"
+    bottom_border = "╚" + "═" * 31 + "╝"
+
+    lines.append(top_border)
+    for i, item in enumerate(visible_items):
+        if i == 3:
+            text = f"▶ {item}".ljust(29)
+            lines.append(f"║{text}║")
+        else:
+            text = f"  {item}".ljust(29)
+            lines.append(f"║{text}║")
+        if i == 2:
+            lines.append(mid_border)
+    lines.append(bottom_border)
+
     embed = discord.Embed(
-        title="🎡 WHEEL SPINNING...",
+        title=title,
         description=(
             f"{premium_divider()}\n"
-            f"{member.mention} is spinning the **{cost} coin wheel**...\n"
+            f"**User:** {member.mention}\n"
+            f"**Spin Cost:** `{cost}` coins\n\n"
+            f"```fix\n" + "\n".join(lines) + "\n```\n"
             f"{premium_divider()}"
         ),
         color=COLOR_WARN
     )
+    embed.set_footer(text="The pointer stops on the center reward.")
     return embed
 
 
-def build_spin_result_embed(member: discord.Member, cost: int, reward: dict, balance_after: int) -> discord.Embed:
+def build_result_embed(member: discord.Member, cost: int, reward: dict, balance_after: int) -> discord.Embed:
     if reward["type"] == "lose":
-        title = "💀 YOU LOST"
+        title = "💀 BAD LUCK"
         color = COLOR_DENY
-        reward_text = "No reward this time."
+        desc = "You lost this spin."
     elif reward["type"] == "coins":
-        title = "🎉 YOU WON COINS"
+        title = "🎉 COIN WIN"
         color = COLOR_SUCCESS
-        reward_text = f"You won **{reward['amount']} coins**."
+        desc = f"You won **{reward['amount']} coins**."
     elif reward["type"] == "key":
-        title = "🔑 YOU WON A KEY REWARD"
+        title = "🔑 KEY REWARD WON"
         color = COLOR_SUCCESS
-        reward_text = f"You won a **{reward['product']}** key reward.\nStaff can fulfill it from the staff panel."
+        desc = (
+            f"You won a **{reward['product']} key reward**.\n"
+            f"Staff can fulfill it from the staff panel."
+        )
     else:
-        title = "🎁 BONUS"
+        title = "🎁 BONUS WIN"
         color = COLOR_SUCCESS
-        reward_text = f"You received **{reward['amount']} bonus coins**."
+        desc = f"You received **{reward['amount']} bonus coins**."
 
     embed = discord.Embed(
         title=title,
@@ -355,7 +392,8 @@ def build_spin_result_embed(member: discord.Member, cost: int, reward: dict, bal
             f"{premium_divider()}\n"
             f"**User:** {member.mention}\n"
             f"**Spin Cost:** `{cost}` coins\n"
-            f"**Reward:** {reward_text}\n"
+            f"**Reward:** {reward_display(reward)}\n"
+            f"**Result:** {desc}\n"
             f"**New Balance:** `{balance_after}` coins\n"
             f"{premium_divider()}"
         ),
@@ -365,9 +403,27 @@ def build_spin_result_embed(member: discord.Member, cost: int, reward: dict, bal
 
 
 # =========================================================
-# SPIN LOGIC
+# SPIN ANIMATION
 # =========================================================
-user_spin_locks = set()
+DISPLAY_POOL = [
+    "💀 LOSE",
+    "💰 +4 COINS",
+    "💰 +6 COINS",
+    "💰 +8 COINS",
+    "💰 +12 COINS",
+    "💰 +18 COINS",
+    "🎁 BONUS +5",
+    "🎁 BONUS +10",
+    "🔑 1 DAY KEY",
+    "🔑 1 WEEK KEY",
+    "💎 LIFETIME KEY",
+    "💥 JACKPOT",
+]
+
+
+def random_window(size: int = 7) -> list[str]:
+    return [random.choice(DISPLAY_POOL) for _ in range(size)]
+
 
 async def perform_spin(interaction: discord.Interaction, cost: int):
     member = interaction.user
@@ -399,49 +455,53 @@ async def perform_spin(interaction: discord.Interaction, cost: int):
         stats_db[str(member.id)]["last_spin_at"] = now_iso()
         save_json(STATS_FILE, stats_db)
 
-        await interaction.response.send_message(embed=build_spin_start_embed(member, cost), ephemeral=True)
+        await interaction.response.send_message(
+            embed=build_big_spin_embed(member, cost, random_window(), "🎡 BIG WHEEL STARTING..."),
+            ephemeral=True
+        )
 
-        animation_steps = ["🎡", "🎯", "✨", "💎", "🎁", "🔑", "💥"]
-        message = await interaction.original_response()
+        msg = await interaction.original_response()
+        final_reward = roll_reward(cost)
+        final_text = reward_display(final_reward)
 
-        for step in animation_steps:
-            embed = discord.Embed(
-                title=f"{step} SPINNING...",
-                description=(
-                    f"{premium_divider()}\n"
-                    f"{member.mention} is spinning the **{cost} coin wheel**...\n"
-                    f"{premium_divider()}"
-                ),
-                color=COLOR_WARN
-            )
-            await message.edit(embed=embed, view=None)
-            await asyncio.sleep(0.55)
+        delays = [0.15, 0.18, 0.21, 0.25, 0.29, 0.34, 0.40, 0.48, 0.58, 0.70, 0.85]
 
-        reward = roll_reward(cost)
+        for index, delay in enumerate(delays):
+            window = random_window()
+            if index >= len(delays) - 3:
+                # near end, show the real reward in the center area more often
+                window[3] = random.choice(DISPLAY_POOL)
+                if index == len(delays) - 2:
+                    window[4] = final_text
+                if index == len(delays) - 1:
+                    window[3] = final_text
 
-        if reward["type"] == "lose":
+            title = "🎡 WHEEL SPINNING..." if index < len(delays) - 1 else "🎯 WHEEL STOPPING..."
+            await msg.edit(embed=build_big_spin_embed(member, cost, window, title), view=None)
+            await asyncio.sleep(delay)
+
+        if final_reward["type"] == "lose":
             stats_db[str(member.id)]["losses"] += 1
 
-        elif reward["type"] == "coins":
-            add_user_coins(member.id, reward["amount"])
+        elif final_reward["type"] == "coins":
+            add_user_coins(member.id, final_reward["amount"])
             stats_db[str(member.id)]["wins"] += 1
-            stats_db[str(member.id)]["total_coins_won"] += reward["amount"]
+            stats_db[str(member.id)]["total_coins_won"] += final_reward["amount"]
 
-        elif reward["type"] == "freespin":
-            add_user_coins(member.id, reward["amount"])
+        elif final_reward["type"] == "bonus":
+            add_user_coins(member.id, final_reward["amount"])
             stats_db[str(member.id)]["wins"] += 1
-            stats_db[str(member.id)]["total_coins_won"] += reward["amount"]
+            stats_db[str(member.id)]["total_coins_won"] += final_reward["amount"]
 
-        elif reward["type"] == "key":
-            add_pending_key(member.id, reward["product"])
+        elif final_reward["type"] == "key":
+            add_pending_key(member.id, final_reward["product"])
             stats_db[str(member.id)]["wins"] += 1
             stats_db[str(member.id)]["pending_key_wins"] += 1
 
         save_json(STATS_FILE, stats_db)
 
         balance_after = get_user_coins(member.id)
-        result_embed = build_spin_result_embed(member, cost, reward, balance_after)
-        await message.edit(embed=result_embed, view=None)
+        await msg.edit(embed=build_result_embed(member, cost, final_reward, balance_after), view=None)
 
         await send_log(
             guild,
@@ -449,10 +509,10 @@ async def perform_spin(interaction: discord.Interaction, cost: int):
             (
                 f"**User:** {member.mention}\n"
                 f"**Spin Cost:** `{cost}`\n"
-                f"**Reward:** `{reward_label(reward)}`\n"
+                f"**Reward:** `{reward_label(final_reward)}`\n"
                 f"**Balance After:** `{balance_after}`"
             ),
-            color=COLOR_LOG if reward["type"] == "lose" else COLOR_SUCCESS
+            color=COLOR_DENY if final_reward["type"] == "lose" else COLOR_SUCCESS
         )
 
     finally:
@@ -463,19 +523,8 @@ async def perform_spin(interaction: discord.Interaction, cost: int):
 # MODALS
 # =========================================================
 class AddCoinsModal(discord.ui.Modal, title="Add Coins"):
-    user_id_input = discord.ui.TextInput(
-        label="User ID",
-        placeholder="Enter user ID",
-        required=True,
-        max_length=30
-    )
-
-    amount_input = discord.ui.TextInput(
-        label="Amount",
-        placeholder="Enter amount to add",
-        required=True,
-        max_length=10
-    )
+    user_id_input = discord.ui.TextInput(label="User ID", placeholder="Enter user ID", required=True, max_length=30)
+    amount_input = discord.ui.TextInput(label="Amount", placeholder="Enter amount to add", required=True, max_length=10)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not is_staff(interaction.user):
@@ -502,12 +551,7 @@ class AddCoinsModal(discord.ui.Modal, title="Add Coins"):
         await send_log(
             interaction.guild,
             "➕ Coins Added",
-            (
-                f"**Staff:** {interaction.user.mention}\n"
-                f"**User:** {user_text}\n"
-                f"**Added:** `{amount}`\n"
-                f"**New Balance:** `{new_balance}`"
-            ),
+            f"**Staff:** {interaction.user.mention}\n**User:** {user_text}\n**Added:** `{amount}`\n**New Balance:** `{new_balance}`",
             color=COLOR_SUCCESS
         )
 
@@ -518,19 +562,8 @@ class AddCoinsModal(discord.ui.Modal, title="Add Coins"):
 
 
 class RemoveCoinsModal(discord.ui.Modal, title="Remove Coins"):
-    user_id_input = discord.ui.TextInput(
-        label="User ID",
-        placeholder="Enter user ID",
-        required=True,
-        max_length=30
-    )
-
-    amount_input = discord.ui.TextInput(
-        label="Amount",
-        placeholder="Enter amount to remove",
-        required=True,
-        max_length=10
-    )
+    user_id_input = discord.ui.TextInput(label="User ID", placeholder="Enter user ID", required=True, max_length=30)
+    amount_input = discord.ui.TextInput(label="Amount", placeholder="Enter amount to remove", required=True, max_length=10)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not is_staff(interaction.user):
@@ -557,12 +590,7 @@ class RemoveCoinsModal(discord.ui.Modal, title="Remove Coins"):
         await send_log(
             interaction.guild,
             "➖ Coins Removed",
-            (
-                f"**Staff:** {interaction.user.mention}\n"
-                f"**User:** {user_text}\n"
-                f"**Removed:** `{amount}`\n"
-                f"**New Balance:** `{new_balance}`"
-            ),
+            f"**Staff:** {interaction.user.mention}\n**User:** {user_text}\n**Removed:** `{amount}`\n**New Balance:** `{new_balance}`",
             color=COLOR_WARN
         )
 
@@ -573,19 +601,8 @@ class RemoveCoinsModal(discord.ui.Modal, title="Remove Coins"):
 
 
 class SetCoinsModal(discord.ui.Modal, title="Set Coins"):
-    user_id_input = discord.ui.TextInput(
-        label="User ID",
-        placeholder="Enter user ID",
-        required=True,
-        max_length=30
-    )
-
-    amount_input = discord.ui.TextInput(
-        label="New Balance",
-        placeholder="Enter exact balance",
-        required=True,
-        max_length=10
-    )
+    user_id_input = discord.ui.TextInput(label="User ID", placeholder="Enter user ID", required=True, max_length=30)
+    amount_input = discord.ui.TextInput(label="New Balance", placeholder="Enter exact balance", required=True, max_length=10)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not is_staff(interaction.user):
@@ -611,11 +628,7 @@ class SetCoinsModal(discord.ui.Modal, title="Set Coins"):
         await send_log(
             interaction.guild,
             "🧾 Coins Set",
-            (
-                f"**Staff:** {interaction.user.mention}\n"
-                f"**User:** {user_text}\n"
-                f"**New Balance:** `{amount}`"
-            ),
+            f"**Staff:** {interaction.user.mention}\n**User:** {user_text}\n**New Balance:** `{amount}`",
             color=COLOR_INFO
         )
 
@@ -625,13 +638,8 @@ class SetCoinsModal(discord.ui.Modal, title="Set Coins"):
         )
 
 
-class CheckUserModal(discord.ui.Modal, title="Check User Balance"):
-    user_id_input = discord.ui.TextInput(
-        label="User ID",
-        placeholder="Enter user ID",
-        required=True,
-        max_length=30
-    )
+class CheckUserModal(discord.ui.Modal, title="Check User"):
+    user_id_input = discord.ui.TextInput(label="User ID", placeholder="Enter user ID", required=True, max_length=30)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not is_staff(interaction.user):
@@ -670,12 +678,7 @@ class CheckUserModal(discord.ui.Modal, title="Check User Balance"):
 
 
 class FulfillKeyModal(discord.ui.Modal, title="Fulfill Pending Key Reward"):
-    user_id_input = discord.ui.TextInput(
-        label="User ID",
-        placeholder="Enter user ID",
-        required=True,
-        max_length=30
-    )
+    user_id_input = discord.ui.TextInput(label="User ID", placeholder="Enter user ID", required=True, max_length=30)
 
     async def on_submit(self, interaction: discord.Interaction):
         if not is_staff(interaction.user):
@@ -699,11 +702,7 @@ class FulfillKeyModal(discord.ui.Modal, title="Fulfill Pending Key Reward"):
         await send_log(
             interaction.guild,
             "🔑 Key Reward Fulfilled",
-            (
-                f"**Staff:** {interaction.user.mention}\n"
-                f"**User:** {user_text}\n"
-                f"**Reward:** `{fulfilled['product_type']}`"
-            ),
+            f"**Staff:** {interaction.user.mention}\n**User:** {user_text}\n**Reward:** `{fulfilled['product_type']}`",
             color=COLOR_SUCCESS
         )
 
@@ -715,7 +714,6 @@ class FulfillKeyModal(discord.ui.Modal, title="Fulfill Pending Key Reward"):
                         description=(
                             f"{premium_divider()}\n"
                             f"Staff marked your **{fulfilled['product_type']}** reward as fulfilled.\n"
-                            f"Check with staff for the actual key delivery.\n"
                             f"{premium_divider()}"
                         ),
                         color=COLOR_SUCCESS
@@ -804,30 +802,53 @@ class WheelStaffView(discord.ui.View):
 # =========================================================
 # COMMANDS
 # =========================================================
-@bot.tree.command(name="send_wheel_panel", description="Send the public wheel panel")
+@bot.tree.command(name="deploy_wheel_panels", description="Post the wheel panel and staff panel to the configured channels")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+async def deploy_wheel_panels(interaction: discord.Interaction):
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("Staff only.", ephemeral=True)
+        return
+
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message("Guild not found.", ephemeral=True)
+        return
+
+    public_channel = guild.get_channel(WHEEL_PANEL_CHANNEL_ID)
+    staff_channel = guild.get_channel(WHEEL_STAFF_PANEL_CHANNEL_ID)
+
+    if not isinstance(public_channel, discord.TextChannel):
+        await interaction.response.send_message("Public wheel channel not found.", ephemeral=True)
+        return
+
+    if not isinstance(staff_channel, discord.TextChannel):
+        await interaction.response.send_message("Staff panel channel not found.", ephemeral=True)
+        return
+
+    await public_channel.send(embed=build_main_panel_embed(), view=WheelMainView())
+    await staff_channel.send(embed=build_staff_panel_embed(), view=WheelStaffView())
+
+    await interaction.response.send_message("Wheel panels deployed successfully.", ephemeral=True)
+
+
+@bot.tree.command(name="send_wheel_panel", description="Send the public wheel panel here")
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 async def send_wheel_panel(interaction: discord.Interaction):
     if not is_staff(interaction.user):
         await interaction.response.send_message("Staff only.", ephemeral=True)
         return
 
-    await interaction.response.send_message(
-        embed=build_main_panel_embed(),
-        view=WheelMainView()
-    )
+    await interaction.response.send_message(embed=build_main_panel_embed(), view=WheelMainView())
 
 
-@bot.tree.command(name="send_wheel_staff_panel", description="Send the staff wheel panel")
+@bot.tree.command(name="send_wheel_staff_panel", description="Send the staff wheel panel here")
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 async def send_wheel_staff_panel(interaction: discord.Interaction):
     if not is_staff(interaction.user):
         await interaction.response.send_message("Staff only.", ephemeral=True)
         return
 
-    await interaction.response.send_message(
-        embed=build_staff_panel_embed(),
-        view=WheelStaffView()
-    )
+    await interaction.response.send_message(embed=build_staff_panel_embed(), view=WheelStaffView())
 
 
 @bot.tree.command(name="balance", description="Check your wheel balance")
