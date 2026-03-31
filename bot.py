@@ -161,6 +161,15 @@ def set_best_stat(user_id: int, key: str, value: int):
         save_json(STATS_FILE, stats_db)
 
 
+def get_active_game(user_id: int, game_type: str | None = None):
+    game = active_games.get(user_id)
+    if not game:
+        return None
+    if game_type is not None and game.get("type") != game_type:
+        return None
+    return game
+
+
 async def send_log(guild: discord.Guild, title: str, description: str, color: int = COLOR_LOG):
     ch = guild.get_channel(GAME_LOG_CHANNEL_ID)
     if isinstance(ch, discord.TextChannel):
@@ -204,7 +213,7 @@ def compute_daily_reward(user_id: int):
         except Exception:
             streak = 1
 
-    reward = 5 if streak % 5 == 0 else 1
+    reward = random.randint(1, 100)
     return reward, streak
 
 
@@ -459,8 +468,8 @@ def build_mines_start_embed(member: discord.Member, bet: int, mine_count: int, s
     return embed
 
 
-def build_daily_embed(amount: int, streak: int, milestone: bool) -> discord.Embed:
-    extra = "🔥 5-day milestone reward!" if milestone else "Come back tomorrow for another claim."
+def build_daily_embed(amount: int, streak: int, lucky: bool) -> discord.Embed:
+    extra = "🔥 Lucky daily hit!" if lucky else "🎉 Random daily reward claimed."
     embed = discord.Embed(
         title="🎁 DAILY CLAIMED",
         description=(
@@ -702,7 +711,7 @@ class ArcadeHubView(discord.ui.View):
         }
         save_json(DAILY_FILE, daily_db)
 
-        milestone = reward == 5
+        lucky = reward >= 90
 
         await send_log(
             interaction.guild,
@@ -710,7 +719,7 @@ class ArcadeHubView(discord.ui.View):
             f"**User:** {interaction.user.mention}\n**Reward:** `{reward}`\n**Streak:** `{streak}`",
             color=COLOR_SUCCESS
         )
-        await interaction.response.send_message(embed=build_daily_embed(reward, streak, milestone), ephemeral=True)
+        await interaction.response.send_message(embed=build_daily_embed(reward, streak, lucky), ephemeral=True)
 
     @discord.ui.button(label="Balance", style=discord.ButtonStyle.secondary, emoji="💰", custom_id="hub_balance")
     async def balance_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -870,9 +879,9 @@ class MinesTileButton(discord.ui.Button):
         self.index = index
 
     async def callback(self, interaction: discord.Interaction):
-        game = active_games.get(interaction.user.id)
-        if not game or game.get("type") != "mines":
-            await interaction.response.send_message("No active mines game.", ephemeral=True)
+        game = get_active_game(interaction.user.id, "mines")
+        if not game:
+            await interaction.response.send_message("This game is already finished. Start a new one.", ephemeral=True)
             return
         if self.index in game["opened"]:
             await interaction.response.send_message("This tile is already opened.", ephemeral=True)
@@ -1133,9 +1142,9 @@ async def start_road_game(interaction: discord.Interaction, bet: int):
 
 async def road_step(interaction: discord.Interaction):
     member = interaction.user
-    game = active_games.get(member.id)
-    if not game or game.get("type") != "road":
-        await interaction.response.send_message("No active road game.", ephemeral=True)
+    game = get_active_game(member.id, "road")
+    if not game:
+        await interaction.response.send_message("This game is already finished. Start a new one.", ephemeral=True)
         return
 
     next_step = game["steps"] + 1
@@ -1188,9 +1197,9 @@ async def road_step(interaction: discord.Interaction):
 
 async def road_cashout(interaction: discord.Interaction):
     member = interaction.user
-    game = active_games.get(member.id)
-    if not game or game.get("type") != "road":
-        await interaction.response.send_message("No active road game.", ephemeral=True)
+    game = get_active_game(member.id, "road")
+    if not game:
+        await interaction.response.send_message("This game is already finished. Start a new one.", ephemeral=True)
         return
     if game["steps"] == 0:
         await interaction.response.send_message("Take at least one step first.", ephemeral=True)
@@ -1223,7 +1232,7 @@ def mines_cashout_value(bet: int, safe_hits: int, mine_count: int) -> int:
     remaining_tiles = 16
     remaining_safe = 16 - mine_count
 
-    for i in range(safe_hits):
+    for _ in range(safe_hits):
         if remaining_safe <= 0:
             break
         chance_scale = remaining_tiles / remaining_safe
@@ -1275,9 +1284,9 @@ async def start_mines_game(interaction: discord.Interaction, bet: int, mine_coun
 
 async def mines_pick(interaction: discord.Interaction, index: int):
     member = interaction.user
-    game = active_games.get(member.id)
-    if not game or game.get("type") != "mines":
-        await interaction.response.send_message("No active mines game.", ephemeral=True)
+    game = get_active_game(member.id, "mines")
+    if not game:
+        await interaction.response.send_message("This game is already finished. Start a new one.", ephemeral=True)
         return
 
     game["opened"].append(index)
@@ -1343,9 +1352,9 @@ async def mines_pick(interaction: discord.Interaction, index: int):
 
 async def mines_cashout(interaction: discord.Interaction):
     member = interaction.user
-    game = active_games.get(member.id)
-    if not game or game.get("type") != "mines":
-        await interaction.response.send_message("No active mines game.", ephemeral=True)
+    game = get_active_game(member.id, "mines")
+    if not game:
+        await interaction.response.send_message("This game is already finished. Start a new one.", ephemeral=True)
         return
     if game["safe_hits"] == 0:
         await interaction.response.send_message("Open at least one safe tile first.", ephemeral=True)
@@ -1493,9 +1502,9 @@ async def start_hilo_game(interaction: discord.Interaction, bet: int):
 
 async def hilo_guess(interaction: discord.Interaction, guess: str):
     member = interaction.user
-    game = active_games.get(member.id)
-    if not game or game.get("type") != "hilo":
-        await interaction.response.send_message("No active HiLo game.", ephemeral=True)
+    game = get_active_game(member.id, "hilo")
+    if not game:
+        await interaction.response.send_message("This game is already finished. Start a new one.", ephemeral=True)
         return
 
     current = game["current"]
@@ -1573,9 +1582,9 @@ async def hilo_guess(interaction: discord.Interaction, guess: str):
 
 async def hilo_cashout(interaction: discord.Interaction):
     member = interaction.user
-    game = active_games.get(member.id)
-    if not game or game.get("type") != "hilo":
-        await interaction.response.send_message("No active HiLo game.", ephemeral=True)
+    game = get_active_game(member.id, "hilo")
+    if not game:
+        await interaction.response.send_message("This game is already finished. Start a new one.", ephemeral=True)
         return
     if game["streak"] == 0:
         await interaction.response.send_message("Get at least one correct guess first.", ephemeral=True)
