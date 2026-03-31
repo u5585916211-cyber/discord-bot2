@@ -68,7 +68,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 coins_db = {}
 stats_db = {}
 daily_db = {}
-
 active_games = {}
 
 # =========================================================
@@ -85,9 +84,11 @@ def load_json(path: str, default):
         except json.JSONDecodeError:
             return default
 
+
 def save_json(path: str, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4)
+
 
 # =========================================================
 # HELPERS
@@ -95,29 +96,37 @@ def save_json(path: str, data):
 def premium_divider() -> str:
     return "━━━━━━━━━━━━━━━━━━━━━━━━"
 
+
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
+
 def now_iso() -> str:
     return now_utc().isoformat()
+
 
 def is_staff(member: discord.Member) -> bool:
     if member.guild_permissions.administrator or member.guild_permissions.manage_guild:
         return True
     return any(role.id == STAFF_ROLE_ID for role in member.roles)
 
+
 def get_user_coins(user_id: int) -> int:
     return int(coins_db.get(str(user_id), 0))
+
 
 def set_user_coins(user_id: int, amount: int):
     coins_db[str(user_id)] = max(0, int(amount))
     save_json(COINS_FILE, coins_db)
 
+
 def add_user_coins(user_id: int, amount: int):
     set_user_coins(user_id, get_user_coins(user_id) + int(amount))
 
+
 def remove_user_coins(user_id: int, amount: int):
     set_user_coins(user_id, max(0, get_user_coins(user_id) - int(amount)))
+
 
 def ensure_user_stats(user_id: int):
     uid = str(user_id)
@@ -138,10 +147,12 @@ def ensure_user_stats(user_id: int):
             "best_hilo_streak": 0,
         }
 
+
 def add_stat(user_id: int, key: str, amount: int = 1):
     ensure_user_stats(user_id)
     stats_db[str(user_id)][key] += amount
     save_json(STATS_FILE, stats_db)
+
 
 def set_best_stat(user_id: int, key: str, value: int):
     ensure_user_stats(user_id)
@@ -149,10 +160,12 @@ def set_best_stat(user_id: int, key: str, value: int):
         stats_db[str(user_id)][key] = value
         save_json(STATS_FILE, stats_db)
 
+
 async def send_log(guild: discord.Guild, title: str, description: str, color: int = COLOR_LOG):
     ch = guild.get_channel(GAME_LOG_CHANNEL_ID)
     if isinstance(ch, discord.TextChannel):
         await ch.send(embed=discord.Embed(title=title, description=description, color=color))
+
 
 # =========================================================
 # DAILY
@@ -173,6 +186,7 @@ def can_claim_daily(user_id: int):
         return True, None
     return False, next_claim
 
+
 def compute_daily_reward(user_id: int):
     uid = str(user_id)
     streak = 1
@@ -192,6 +206,7 @@ def compute_daily_reward(user_id: int):
 
     reward = 5 if streak % 5 == 0 else 1
     return reward, streak
+
 
 # =========================================================
 # WHEEL CONFIG
@@ -234,10 +249,12 @@ DISPLAY_POOL = [
     "🎁 +25 BONUS",
 ]
 
+
 def roll_wheel_reward(cost: int) -> dict:
     pool = WHEEL_CONFIG[cost]
     weights = [r["weight"] for r in pool]
     return random.choices(pool, weights=weights, k=1)[0].copy()
+
 
 def reward_display(reward: dict) -> str:
     if reward["type"] == "lose":
@@ -248,8 +265,10 @@ def reward_display(reward: dict) -> str:
         return f"🎁 +{reward['amount']} BONUS"
     return "❔ UNKNOWN"
 
+
 def random_wheel_rows():
     return [random.choice(DISPLAY_POOL) for _ in range(5)]
+
 
 # =========================================================
 # EMBEDS
@@ -277,12 +296,13 @@ def build_arcade_hub_embed() -> discord.Embed:
     embed.set_footer(text="Internal server coins only • No real money")
     return embed
 
+
 def build_staff_panel_embed() -> discord.Embed:
     embed = discord.Embed(
         title="🛠️ ARCADE STAFF PANEL",
         description=(
             f"{premium_divider()}\n"
-            f"Manage user balances and check profiles.\n"
+            f"Manage user balances and profiles.\n"
             f"{premium_divider()}"
         ),
         color=COLOR_INFO
@@ -293,6 +313,7 @@ def build_staff_panel_embed() -> discord.Embed:
     embed.add_field(name="👤 Check User", value="View balance and stats", inline=False)
     return embed
 
+
 def build_balance_embed(member: discord.Member) -> discord.Embed:
     embed = discord.Embed(
         title="💰 YOUR BALANCE",
@@ -302,6 +323,7 @@ def build_balance_embed(member: discord.Member) -> discord.Embed:
     embed.add_field(name="User", value=member.mention, inline=False)
     embed.add_field(name="Coins", value=f"`{get_user_coins(member.id)}`", inline=True)
     return embed
+
 
 def build_wheel_info_embed() -> discord.Embed:
     embed = discord.Embed(
@@ -315,6 +337,7 @@ def build_wheel_info_embed() -> discord.Embed:
         color=COLOR_INFO
     )
     return embed
+
 
 def build_wheel_spin_embed(member: discord.Member, cost: int, rows: list[str], title: str) -> discord.Embed:
     top = "╔" + "═" * 29 + "╗"
@@ -344,6 +367,7 @@ def build_wheel_spin_embed(member: discord.Member, cost: int, rows: list[str], t
     embed.set_footer(text="The arrow points to the final reward.")
     return embed
 
+
 def build_wheel_result_embed(member: discord.Member, cost: int, reward: dict, balance_after: int) -> discord.Embed:
     title = "💀 YOU LOST" if reward["type"] == "lose" else "🎉 WHEEL RESULT"
     color = COLOR_DENY if reward["type"] == "lose" else COLOR_SUCCESS
@@ -355,6 +379,7 @@ def build_wheel_result_embed(member: discord.Member, cost: int, reward: dict, ba
     embed.add_field(name="Reward", value=desc, inline=True)
     embed.add_field(name="Balance", value=f"`{balance_after}`", inline=True)
     return embed
+
 
 def build_road_start_embed(member: discord.Member, bet: int) -> discord.Embed:
     embed = discord.Embed(
@@ -369,6 +394,7 @@ def build_road_start_embed(member: discord.Member, bet: int) -> discord.Embed:
         color=COLOR_ROAD
     )
     return embed
+
 
 def build_road_embed(member: discord.Member, state: dict, title: str) -> discord.Embed:
     lane = []
@@ -400,6 +426,7 @@ def build_road_embed(member: discord.Member, state: dict, title: str) -> discord
     )
     return embed
 
+
 def build_mines_config_embed() -> discord.Embed:
     embed = discord.Embed(
         title="💣 MINES",
@@ -413,6 +440,7 @@ def build_mines_config_embed() -> discord.Embed:
         color=COLOR_MINES
     )
     return embed
+
 
 def build_mines_start_embed(member: discord.Member, bet: int, mine_count: int, safe_hits: int, payout: int) -> discord.Embed:
     embed = discord.Embed(
@@ -430,6 +458,7 @@ def build_mines_start_embed(member: discord.Member, bet: int, mine_count: int, s
     )
     return embed
 
+
 def build_daily_embed(amount: int, streak: int, milestone: bool) -> discord.Embed:
     extra = "🔥 5-day milestone reward!" if milestone else "Come back tomorrow for another claim."
     embed = discord.Embed(
@@ -445,6 +474,7 @@ def build_daily_embed(amount: int, streak: int, milestone: bool) -> discord.Embe
     )
     return embed
 
+
 def build_coinflip_embed(member: discord.Member, bet: int, result_text: str, choice: str, win: bool, balance: int) -> discord.Embed:
     color = COLOR_SUCCESS if win else COLOR_DENY
     title = "🪙 COINFLIP WIN" if win else "🪙 COINFLIP LOSE"
@@ -455,6 +485,7 @@ def build_coinflip_embed(member: discord.Member, bet: int, result_text: str, cho
     embed.add_field(name="Result", value=result_text, inline=True)
     embed.add_field(name="Balance", value=f"`{balance}`", inline=False)
     return embed
+
 
 def build_hilo_embed(member: discord.Member, game: dict, title: str) -> discord.Embed:
     current = game["current"]
@@ -473,6 +504,7 @@ def build_hilo_embed(member: discord.Member, game: dict, title: str) -> discord.
         color=COLOR_HILO
     )
     return embed
+
 
 # =========================================================
 # MODALS
@@ -507,6 +539,7 @@ class AddCoinsModal(discord.ui.Modal, title="Add Coins"):
         )
         await interaction.response.send_message("Coins added.", ephemeral=True)
 
+
 class RemoveCoinsModal(discord.ui.Modal, title="Remove Coins"):
     user_id_input = discord.ui.TextInput(label="User ID", required=True, max_length=30)
     amount_input = discord.ui.TextInput(label="Amount", required=True, max_length=10)
@@ -536,6 +569,7 @@ class RemoveCoinsModal(discord.ui.Modal, title="Remove Coins"):
             color=COLOR_WARN
         )
         await interaction.response.send_message("Coins removed.", ephemeral=True)
+
 
 class SetCoinsModal(discord.ui.Modal, title="Set Coins"):
     user_id_input = discord.ui.TextInput(label="User ID", required=True, max_length=30)
@@ -567,6 +601,7 @@ class SetCoinsModal(discord.ui.Modal, title="Set Coins"):
         )
         await interaction.response.send_message("Balance updated.", ephemeral=True)
 
+
 class CheckUserModal(discord.ui.Modal, title="Check User"):
     user_id_input = discord.ui.TextInput(label="User ID", required=True, max_length=30)
 
@@ -595,6 +630,7 @@ class CheckUserModal(discord.ui.Modal, title="Check User"):
         embed.add_field(name="Best Mines", value=f"`{data['best_mines_safe_hits']}`", inline=True)
         embed.add_field(name="Best HiLo", value=f"`{data['best_hilo_streak']}`", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 # =========================================================
 # VIEWS
@@ -703,6 +739,7 @@ class ArcadeHubView(discord.ui.View):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+
 class WheelSelectView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=120)
@@ -719,6 +756,7 @@ class WheelSelectView(discord.ui.View):
     async def spin25(self, interaction: discord.Interaction, button: discord.ui.Button):
         await perform_wheel_spin(interaction, 25)
 
+
 class RoadBetView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=120)
@@ -734,6 +772,7 @@ class RoadBetView(discord.ui.View):
     @discord.ui.button(label="Bet 25", style=discord.ButtonStyle.danger, emoji="💥")
     async def bet25(self, interaction: discord.Interaction, button: discord.ui.Button):
         await start_road_game(interaction, 25)
+
 
 class RoadGameView(discord.ui.View):
     def __init__(self, user_id: int):
@@ -753,6 +792,7 @@ class RoadGameView(discord.ui.View):
             await interaction.response.send_message("This is not your game.", ephemeral=True)
             return
         await road_cashout(interaction)
+
 
 class MinesBetView(discord.ui.View):
     def __init__(self):
@@ -786,6 +826,7 @@ class MinesBetView(discord.ui.View):
     async def bet25(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._go(interaction, 25)
 
+
 class MinesCountView(discord.ui.View):
     def __init__(self, bet: int):
         super().__init__(timeout=120)
@@ -807,6 +848,7 @@ class MinesCountView(discord.ui.View):
     async def four(self, interaction: discord.Interaction, button: discord.ui.Button):
         await start_mines_game(interaction, self.bet, 4)
 
+
 class MinesGameView(discord.ui.View):
     def __init__(self, user_id: int):
         super().__init__(timeout=180)
@@ -820,6 +862,7 @@ class MinesGameView(discord.ui.View):
             await interaction.response.send_message("This is not your game.", ephemeral=True)
             return
         await mines_cashout(interaction)
+
 
 class MinesTileButton(discord.ui.Button):
     def __init__(self, index: int):
@@ -835,6 +878,7 @@ class MinesTileButton(discord.ui.Button):
             await interaction.response.send_message("This tile is already opened.", ephemeral=True)
             return
         await mines_pick(interaction, self.index)
+
 
 class CoinflipBetView(discord.ui.View):
     def __init__(self):
@@ -863,6 +907,7 @@ class CoinflipBetView(discord.ui.View):
     async def bet25(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._start(interaction, 25)
 
+
 class CoinflipChoiceView(discord.ui.View):
     def __init__(self, bet: int):
         super().__init__(timeout=120)
@@ -875,6 +920,7 @@ class CoinflipChoiceView(discord.ui.View):
     @discord.ui.button(label="Tails", style=discord.ButtonStyle.secondary, emoji="🌙")
     async def tails(self, interaction: discord.Interaction, button: discord.ui.Button):
         await play_coinflip(interaction, self.bet, "Tails")
+
 
 class HiLoBetView(discord.ui.View):
     def __init__(self):
@@ -891,6 +937,7 @@ class HiLoBetView(discord.ui.View):
     @discord.ui.button(label="Bet 25", style=discord.ButtonStyle.danger, emoji="🔥")
     async def bet25(self, interaction: discord.Interaction, button: discord.ui.Button):
         await start_hilo_game(interaction, 25)
+
 
 class HiLoGameView(discord.ui.View):
     def __init__(self, user_id: int):
@@ -917,6 +964,7 @@ class HiLoGameView(discord.ui.View):
             await interaction.response.send_message("This is not your game.", ephemeral=True)
             return
         await hilo_cashout(interaction)
+
 
 class StaffPanelView(discord.ui.View):
     def __init__(self):
@@ -949,6 +997,7 @@ class StaffPanelView(discord.ui.View):
             await interaction.response.send_message("Staff only.", ephemeral=True)
             return
         await interaction.response.send_modal(CheckUserModal())
+
 
 # =========================================================
 # GAME LOGIC: WHEEL
@@ -1017,6 +1066,7 @@ async def perform_wheel_spin(interaction: discord.Interaction, cost: int):
     finally:
         active_games.pop(member.id, None)
 
+
 # =========================================================
 # GAME LOGIC: CHICKEN ROAD
 # =========================================================
@@ -1032,6 +1082,7 @@ def road_cashout_for_steps(bet: int, steps: int) -> int:
     }
     return int(round(bet * multipliers.get(steps, 3.30)))
 
+
 def road_crash_chance(step_number: int) -> float:
     mapping = {
         1: 0.18,
@@ -1042,6 +1093,7 @@ def road_crash_chance(step_number: int) -> float:
         6: 0.55,
     }
     return mapping.get(step_number, 0.65)
+
 
 async def start_road_game(interaction: discord.Interaction, bet: int):
     member = interaction.user
@@ -1077,6 +1129,7 @@ async def start_road_game(interaction: discord.Interaction, bet: int):
         view=RoadGameView(member.id),
         ephemeral=True
     )
+
 
 async def road_step(interaction: discord.Interaction):
     member = interaction.user
@@ -1132,6 +1185,7 @@ async def road_step(interaction: discord.Interaction):
         view=RoadGameView(member.id)
     )
 
+
 async def road_cashout(interaction: discord.Interaction):
     member = interaction.user
     game = active_games.get(member.id)
@@ -1160,16 +1214,27 @@ async def road_cashout(interaction: discord.Interaction):
     )
     active_games.pop(member.id, None)
 
+
 # =========================================================
 # GAME LOGIC: MINES
 # =========================================================
 def mines_cashout_value(bet: int, safe_hits: int, mine_count: int) -> int:
     multiplier = 1.0
+    remaining_tiles = 16
+    remaining_safe = 16 - mine_count
+
     for i in range(safe_hits):
-        chance_scale = (16 / (16 - mine_count - i))
+        if remaining_safe <= 0:
+            break
+        chance_scale = remaining_tiles / remaining_safe
         risk_boost = 1 + (mine_count * 0.18)
         multiplier *= (chance_scale * 0.55 * risk_boost)
+
+        remaining_tiles -= 1
+        remaining_safe -= 1
+
     return max(0, int(round(bet * multiplier)))
+
 
 async def start_mines_game(interaction: discord.Interaction, bet: int, mine_count: int):
     member = interaction.user
@@ -1206,6 +1271,7 @@ async def start_mines_game(interaction: discord.Interaction, bet: int, mine_coun
         view=MinesGameView(member.id),
         ephemeral=True
     )
+
 
 async def mines_pick(interaction: discord.Interaction, index: int):
     member = interaction.user
@@ -1274,6 +1340,7 @@ async def mines_pick(interaction: discord.Interaction, index: int):
         view=view
     )
 
+
 async def mines_cashout(interaction: discord.Interaction):
     member = interaction.user
     game = active_games.get(member.id)
@@ -1320,6 +1387,7 @@ async def mines_cashout(interaction: discord.Interaction):
         color=COLOR_SUCCESS
     )
     active_games.pop(member.id, None)
+
 
 # =========================================================
 # GAME LOGIC: COINFLIP
@@ -1374,6 +1442,7 @@ async def play_coinflip(interaction: discord.Interaction, bet: int, choice: str)
     finally:
         active_games.pop(member.id, None)
 
+
 # =========================================================
 # GAME LOGIC: HIGHER / LOWER
 # =========================================================
@@ -1387,6 +1456,7 @@ def hilo_payout(bet: int, streak: int) -> int:
         5: 6.00,
     }
     return int(round(bet * multipliers.get(streak, 6.00)))
+
 
 async def start_hilo_game(interaction: discord.Interaction, bet: int):
     member = interaction.user
@@ -1420,6 +1490,7 @@ async def start_hilo_game(interaction: discord.Interaction, bet: int):
         ephemeral=True
     )
 
+
 async def hilo_guess(interaction: discord.Interaction, guess: str):
     member = interaction.user
     game = active_games.get(member.id)
@@ -1429,8 +1500,6 @@ async def hilo_guess(interaction: discord.Interaction, guess: str):
 
     current = game["current"]
     nxt = random.randint(1, 14)
-
-    # reroll equal to keep cleaner
     while nxt == current:
         nxt = random.randint(1, 14)
 
@@ -1501,6 +1570,7 @@ async def hilo_guess(interaction: discord.Interaction, guess: str):
         view=HiLoGameView(member.id)
     )
 
+
 async def hilo_cashout(interaction: discord.Interaction):
     member = interaction.user
     game = active_games.get(member.id)
@@ -1539,10 +1609,97 @@ async def hilo_cashout(interaction: discord.Interaction):
     )
     active_games.pop(member.id, None)
 
+
 # =========================================================
 # COMMANDS
 # =========================================================
 @bot.tree.command(name="deploy_arcade_panels", description="Deploy public arcade panel and staff panel")
 @app_commands.guilds(discord.Object(id=GUILD_ID))
 async def deploy_arcade_panels(interaction: discord.Interaction):
-    if
+    if not is_staff(interaction.user):
+        await interaction.response.send_message("Staff only.", ephemeral=True)
+        return
+
+    guild = interaction.guild
+    if guild is None:
+        await interaction.response.send_message("Guild not found.", ephemeral=True)
+        return
+
+    public_channel = guild.get_channel(GAME_PANEL_CHANNEL_ID)
+    staff_channel = guild.get_channel(STAFF_PANEL_CHANNEL_ID)
+
+    if not isinstance(public_channel, discord.TextChannel):
+        await interaction.response.send_message("Public game channel not found.", ephemeral=True)
+        return
+
+    if not isinstance(staff_channel, discord.TextChannel):
+        await interaction.response.send_message("Staff panel channel not found.", ephemeral=True)
+        return
+
+    await public_channel.send(embed=build_arcade_hub_embed(), view=ArcadeHubView())
+    await staff_channel.send(embed=build_staff_panel_embed(), view=StaffPanelView())
+
+    await interaction.response.send_message("Arcade panels deployed.", ephemeral=True)
+
+
+@bot.tree.command(name="balance", description="Check your balance")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+async def balance(interaction: discord.Interaction):
+    if not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message("Server only.", ephemeral=True)
+        return
+    await interaction.response.send_message(embed=build_balance_embed(interaction.user), ephemeral=True)
+
+
+@bot.tree.command(name="arcade_stats", description="Check your arcade stats")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
+async def arcade_stats(interaction: discord.Interaction):
+    ensure_user_stats(interaction.user.id)
+    data = stats_db[str(interaction.user.id)]
+
+    embed = discord.Embed(title="📊 YOUR ARCADE STATS", color=COLOR_INFO)
+    embed.add_field(name="Games Played", value=f"`{data['games_played']}`", inline=True)
+    embed.add_field(name="Coins Won", value=f"`{data['coins_won']}`", inline=True)
+    embed.add_field(name="Coins Spent", value=f"`{data['coins_spent']}`", inline=True)
+    embed.add_field(name="Wheel Spins", value=f"`{data['wheel_spins']}`", inline=True)
+    embed.add_field(name="Road Runs", value=f"`{data['road_runs']}`", inline=True)
+    embed.add_field(name="Mines Runs", value=f"`{data['mines_runs']}`", inline=True)
+    embed.add_field(name="Coinflip Runs", value=f"`{data['coinflip_runs']}`", inline=True)
+    embed.add_field(name="HiLo Runs", value=f"`{data['hilo_runs']}`", inline=True)
+    embed.add_field(name="Wins", value=f"`{data['wins']}`", inline=True)
+    embed.add_field(name="Losses", value=f"`{data['losses']}`", inline=True)
+    embed.add_field(name="Best Road", value=f"`{data['best_road_steps']}`", inline=True)
+    embed.add_field(name="Best Mines", value=f"`{data['best_mines_safe_hits']}`", inline=True)
+    embed.add_field(name="Best HiLo", value=f"`{data['best_hilo_streak']}`", inline=True)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# =========================================================
+# READY
+# =========================================================
+@bot.event
+async def on_ready():
+    global coins_db, stats_db, daily_db
+
+    coins_db = load_json(COINS_FILE, {})
+    stats_db = load_json(STATS_FILE, {})
+    daily_db = load_json(DAILY_FILE, {})
+
+    print("Arcade bot is starting...")
+    print(f"Logged in as: {bot.user} ({bot.user.id})")
+    print(f"Guild ID loaded: {GUILD_ID}")
+
+    bot.add_view(ArcadeHubView())
+    bot.add_view(StaffPanelView())
+
+    try:
+        synced = await bot.tree.sync(guild=discord.Object(id=GUILD_ID))
+        print(f"Synced {len(synced)} command(s) to guild {GUILD_ID}.")
+    except Exception as e:
+        print(f"Slash command sync error: {e}")
+
+    print("Arcade bot is ready.")
+
+
+bot.run(TOKEN)
